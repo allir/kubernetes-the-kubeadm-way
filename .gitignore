@@ -1,0 +1,4 @@
+/.vagrant
+/*.log
+/admin.kubeconfig
+/join-*.sh
