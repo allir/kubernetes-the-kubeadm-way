@@ -41,7 +41,7 @@ Vagrant.configure("2") do |config|
       # Name shown in the GUI
       node.vm.provider "virtualbox" do |vb|
         vb.name = "kubernetes-ha-master-#{i}"
-        vb.memory = 2048
+        vb.memory = 1024
         vb.cpus = 2
       end
       node.vm.hostname = "master-#{i}"
@@ -69,8 +69,8 @@ Vagrant.configure("2") do |config|
     config.vm.define "worker-#{i}" do |node|
       node.vm.provider "virtualbox" do |vb|
         vb.name = "kubernetes-ha-worker-#{i}"
-        vb.memory = 2048
-        vb.cpus = 2
+        vb.memory = 1024
+        vb.cpus = 1
       end
       node.vm.hostname = "worker-#{i}"
       node.vm.network :private_network, ip: IP_NW + "#{WORKER_IP_START + i}"
@@ -92,6 +92,7 @@ Vagrant.configure("2") do |config|
   end # workers
 
 end
+
 
 $setup_ssh = <<SCRIPT
 set -x
@@ -225,13 +226,20 @@ SCRIPT
 
 $cluster_init = <<SCRIPT
 set -euxo pipefail
+NODE_IP=$(ip addr show enp0s8 | grep "inet " | awk '{print $2}' | cut -d/ -f1)
+
 # Kubeadm Init
+### NOTE THIS IS STUPID. Pre pull the images, then add a new default route so that etcd uses the correct IP. Delete the dummy default route after.
+kubeadm config images pull
+ip route add default via ${NODE_IP} metric 10
 kubeadm init --control-plane-endpoint ${LOADBALANCER_IP} \
-  --apiserver-advertise-address $(ip addr show enp0s8 | grep "inet " | awk '{print $2}' | cut -d/ -f1) \
+  --apiserver-advertise-address ${NODE_IP} \
   --pod-network-cidr ${CLUSTER_POD_CIDR} \
   --service-cidr ${CLUSTER_SERVICE_CIDR} \
   --upload-certs \
   | tee /vagrant/kubeadm-init.log
+
+ip route delete default via ${NODE_IP}
 
 # Set up CNI network addon
 export KUBECONFIG=/etc/kubernetes/admin.conf
@@ -244,15 +252,29 @@ WORKER_JOIN_CMD=$(grep -e "kubeadm join" -A3 /vagrant/kubeadm-init.log | sed 's/
 cat <<EOF >/vagrant/join-master.sh
 #!/bin/bash
 set -x
+NODE_IP=$(ip addr show enp0s8 | grep "inet " | awk '{print $2}' | cut -d/ -f1)
+
+### NOTE THIS IS STUPID. Pre pull the images, then add a new default route so that etcd uses the correct IP. Delete the dummy default route after.
+kubeadm config images pull
+ip route add default via ${NODE_IP} metric 10
 
 ${MASTER_JOIN_CMD}
+
+ip route delete default via ${NODE_IP}
 EOF
 
 cat <<EOF >/vagrant/join-worker.sh
 #!/bin/bash
 set -x
+NODE_IP=$(ip addr show enp0s8 | grep "inet " | awk '{print $2}' | cut -d/ -f1)
+
+### NOTE THIS IS STUPID. Pre pull the images, then add a new default route so that etcd uses the correct IP. Delete the dummy default route after.
+kubeadm config images pull
+ip route add default via ${NODE_IP} metric 10
 
 ${WORKER_JOIN_CMD}
+
+ip route delete default via ${NODE_IP}
 EOF
 
 chmod +x /vagrant/join-master.sh /vagrant/join-worker.sh
