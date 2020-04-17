@@ -126,6 +126,9 @@ set -x
 # Install docker
 curl -fsSL https://get.docker.com | bash
 
+# Give vagrant user access to docker socket
+usermod -aG docker vagrant
+
 # Setup daemon
 cat > /etc/docker/daemon.json <<EOF
 {
