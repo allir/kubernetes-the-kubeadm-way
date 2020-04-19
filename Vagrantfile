@@ -17,13 +17,13 @@ Vagrant.configure("2") do |config|
   # Provision Load Balancer Node
   config.vm.define "loadbalancer" do |node|
     node.vm.provider "virtualbox" do |vb|
-      vb.name = "kubernetes-ha-lb"
+      vb.name = "kubernetes-the-kubeadm-way-lb"
       vb.memory = 512
       vb.cpus = 1
     end
     node.vm.hostname = "loadbalancer"
     node.vm.network :private_network, ip: IP_NW + "#{LB_IP_START}"
-	  node.vm.network "forwarded_port", guest: 22, host: 2730
+	  #node.vm.network "forwarded_port", guest: 22, host: 2740
 
     node.vm.provision "environment-file", type: "file", source: "kubernetes-the-kubeadm-way.env", destination: "/tmp/kubernetes-the-kubeadm-way.sh"
     node.vm.provision "setup-environment", type: "shell", inline: "mv /tmp/kubernetes-the-kubeadm-way.sh /etc/profile.d/"
@@ -40,13 +40,13 @@ Vagrant.configure("2") do |config|
     config.vm.define "master-#{i}" do |node|
       # Name shown in the GUI
       node.vm.provider "virtualbox" do |vb|
-        vb.name = "kubernetes-ha-master-#{i}"
+        vb.name = "kubernetes-the-kubeadm-way-master-#{i}"
         vb.memory = 1024
         vb.cpus = 2
       end
       node.vm.hostname = "master-#{i}"
       node.vm.network :private_network, ip: IP_NW + "#{MASTER_IP_START + i}"
-      node.vm.network "forwarded_port", guest: 22, host: "#{2710 + i}"
+      #node.vm.network "forwarded_port", guest: 22, host: "#{2750 + i}"
 
       node.vm.provision "environment-file", type: "file", source: "kubernetes-the-kubeadm-way.env", destination: "/tmp/kubernetes-the-kubeadm-way.sh"
       node.vm.provision "setup-environment", type: "shell", inline: "mv /tmp/kubernetes-the-kubeadm-way.sh /etc/profile.d/"
@@ -68,13 +68,13 @@ Vagrant.configure("2") do |config|
   (1..NUM_WORKER_NODE).each do |i|
     config.vm.define "worker-#{i}" do |node|
       node.vm.provider "virtualbox" do |vb|
-        vb.name = "kubernetes-ha-worker-#{i}"
+        vb.name = "kubernetes-the-kubeadm-way-worker-#{i}"
         vb.memory = 1024
         vb.cpus = 1
       end
       node.vm.hostname = "worker-#{i}"
       node.vm.network :private_network, ip: IP_NW + "#{WORKER_IP_START + i}"
-      node.vm.network "forwarded_port", guest: 22, host: "#{2720 + i}"
+      #node.vm.network "forwarded_port", guest: 22, host: "#{2750 + i}"
 
       node.vm.provision "environment-file", type: "file", source: "kubernetes-the-kubeadm-way.env", destination: "/tmp/kubernetes-the-kubeadm-way.sh"
       node.vm.provision "setup-environment", type: "shell", inline: "mv /tmp/kubernetes-the-kubeadm-way.sh /etc/profile.d/"
@@ -136,7 +136,7 @@ cat > /etc/docker/daemon.json <<EOF
   "exec-opts": ["native.cgroupdriver=systemd"],
   "log-driver": "json-file",
   "log-opts": {
-    "max-size": "100m" d
+    "max-size": "100m"
   },
   "storage-driver": "overlay2"
 }
