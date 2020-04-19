@@ -136,7 +136,7 @@ cat > /etc/docker/daemon.json <<EOF
   "exec-opts": ["native.cgroupdriver=systemd"],
   "log-driver": "json-file",
   "log-opts": {
-    "max-size": "100m"
+    "max-size": "100m" d
   },
   "storage-driver": "overlay2"
 }
@@ -152,14 +152,14 @@ SCRIPT
 
 $allow_bridge_nf_traffic = <<SCRIPT
 set -euxo pipefail
+
 lsmod | grep br_netfilter || modprobe br_netfilter
-sysctl net.bridge.bridge-nf-call-iptables=1
-sysctl net.bridge.bridge-nf-call-ip6tables=1
 
 cat <<EOF > /etc/sysctl.d/k8s.conf
 net.bridge.bridge-nf-call-ip6tables = 1
 net.bridge.bridge-nf-call-iptables = 1
 EOF
+
 sysctl --system
 SCRIPT
 
