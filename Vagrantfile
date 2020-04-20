@@ -241,6 +241,43 @@ kubeadm init --control-plane-endpoint ${LOADBALANCER_IP} \
 
 ip route delete default via ${NODE_IP}
 
+
+# Edit the coredns deployment so it serves the /etc/hosts from it's host so pods can resolve the master/worker nodes
+export KUBECONFIG=/etc/kubernetes/admin.conf
+kubectl -n kube-system patch deployment coredns --patch '{"spec": {"template": {"spec": {"containers": [{"name": "coredns", "volumeMounts": [{"name": "hosts-volume", "mountPath": "/etc/hosts"}] }], "volumes": [{ "name": "hosts-volume", "hostPath": {"path": "/etc/hosts"} }] } } } }'
+
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns
+  namespace: kube-system
+data:
+  Corefile: |
+    .:53 {
+        errors
+        health {
+          lameduck 5s
+        }
+        ready
+        hosts {
+          fallthrough
+        }
+        kubernetes cluster.local in-addr.arpa ip6.arpa {
+          pods insecure
+          fallthrough in-addr.arpa ip6.arpa
+          ttl 30
+        }
+        prometheus :9153
+        forward . /etc/resolv.conf
+        cache 30
+        loop
+        reload
+        loadbalance
+    }
+EOF
+
+
 # Set up CNI network addon
 export KUBECONFIG=/etc/kubernetes/admin.conf
 kubectl apply -f "https://cloud.weave.works/k8s/net?k8s-version=$(kubectl version | base64 | tr -d '\n')&env.IPALLOC_RANGE=${CLUSTER_POD_CIDR}"
