@@ -111,3 +111,12 @@ kubectl logs deployment/nginx
 ### Conclusion
 
 Such Awesome! Much k8s!
+
+## Cleanup
+
+Destroy the machines and clean up temporary files from the repository.
+
+```bash
+vagrant destroy -f
+git clean -xf
+```
