@@ -235,14 +235,27 @@ $cluster_init = <<SCRIPT
 set -euxo pipefail
 NODE_IP=$(ip addr show enp0s8 | grep "inet " | awk '{print $2}' | cut -d/ -f1)
 
+cat <<EOF > cluster-config.yaml
+apiVersion: kubeadm.k8s.io/v1beta2
+kind: ClusterConfiguration
+networking:
+  serviceSubnet: "${CLUSTER_SERVICE_CIDR}"
+  podSubnet: "${CLUSTER_POD_CIDR}"
+controlPlaneEndpoint: "${LOADBALANCER_IP}"
+apiServer:
+  extraArgs:
+    advertise-address: "${NODE_IP}"
+#---
+#apiVersion: kubelet.config.k8s.io/v1beta1
+#kind: KubeletConfiguration
+#serverTLSBootstrap: true
+EOF
+
 # Kubeadm Init
 ### NOTE THIS IS STUPID. Pre pull the images, then add a new default route so that etcd uses the correct IP. Delete the dummy default route after.
 kubeadm config images pull
 ip route add default via ${NODE_IP} metric 10
-kubeadm init --control-plane-endpoint ${LOADBALANCER_IP} \
-  --apiserver-advertise-address ${NODE_IP} \
-  --pod-network-cidr ${CLUSTER_POD_CIDR} \
-  --service-cidr ${CLUSTER_SERVICE_CIDR} \
+kubeadm init --config=cluster-config.yaml \
   --upload-certs \
   | tee /vagrant/kubeadm-init.log
 
