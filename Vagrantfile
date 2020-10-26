@@ -2,8 +2,8 @@
 # vi:set ft=ruby sw=2 ts=2 sts=2:
 
 # Define the number of master and worker nodes
-NUM_MASTER_NODE = 3
-NUM_WORKER_NODE = 2
+NUM_MASTER_NODE = 1
+NUM_WORKER_NODE = 1
 
 # Node network
 IP_NW = "192.168.10."
@@ -56,10 +56,15 @@ Vagrant.configure("2") do |config|
 
       node.vm.provision "allow-bridge-nf-traffic", type: "shell", inline: $allow_bridge_nf_traffic
       node.vm.provision "install-docker", type: "shell", inline: $install_docker
+      node.vm.provision "install-nfs-client", type: "shell", inline: $install_nfs_client
       node.vm.provision "install-kubeadm", type: "shell", inline: $install_kubeadm
 
+      node.vm.provision "setup-nfs", type: "shell", inline: $setup_nfs if i == 1
+      
       node.vm.provision "cluster_init", type: "shell", inline: $cluster_init if i == 1
       node.vm.provision "cluster_join", type: "shell", inline: $cluster_join_control_plane unless i == 1
+
+      node.vm.provision "kubernetes-metrics-server", type: "shell", inline: $kubernetes_metrics_server, privileged: false if i == 1
 
     end
   end # masters
@@ -69,8 +74,8 @@ Vagrant.configure("2") do |config|
     config.vm.define "worker-#{i}" do |node|
       node.vm.provider "virtualbox" do |vb|
         vb.name = "kubernetes-the-kubeadm-way-worker-#{i}"
-        vb.memory = 1024
-        vb.cpus = 1
+        vb.memory = 4096
+        vb.cpus = 4
       end
       node.vm.hostname = "worker-#{i}"
       node.vm.network :private_network, ip: IP_NW + "#{WORKER_IP_START + i}"
@@ -84,6 +89,7 @@ Vagrant.configure("2") do |config|
 
       node.vm.provision "allow-bridge-nf-traffic", type: "shell", inline: $allow_bridge_nf_traffic
       node.vm.provision "install-docker", type: "shell", inline: $install_docker
+      node.vm.provision "install-nfs-client", type: "shell", inline: $install_nfs_client
       node.vm.provision "install-kubeadm", type: "shell", inline: $install_kubeadm
 
       node.vm.provision "cluster_join", type: "shell", inline: $cluster_join_worker_node
@@ -128,6 +134,23 @@ for i in {1..#{NUM_WORKER_NODE}}; do
 done
 SCRIPT
 
+$install_nfs_client = <<SCRIPT
+sudo apt-get -qq update && sudo apt-get -qq install -y nfs-common
+SCRIPT
+
+$setup_nfs = <<SCRIPT
+sudo apt-get -qq update && sudo apt-get -qq install -y nfs-kernel-server
+sudo mkdir -p /var/nfs/general
+sudo chown nobody:nogroup /var/nfs/general
+sudo chmod a+rwx /var/nfs/general
+
+cat > /etc/exports <<EOF
+/var/nfs/general    *(rw,sync,no_subtree_check)
+EOF
+
+sudo systemctl enable nfs-server
+sudo systemctl restart nfs-server
+SCRIPT
 
 $install_docker = <<SCRIPT
 set -x
@@ -358,4 +381,11 @@ SCRIPT
 $cluster_join_worker_node = <<SCRIPT
 set -x
 /vagrant/join-worker.sh
+SCRIPT
+
+$kubernetes_metrics_server = <<SCRIPT
+curl -sSL https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.3.7/components.yaml | \
+sed -E 's%apiregistration.k8s.io/v1beta1%apiregistration.k8s.io/v1%g' | \
+sed -E '/args:/a \\          - --kubelet-insecure-tls' | \
+kubectl apply -f -
 SCRIPT
