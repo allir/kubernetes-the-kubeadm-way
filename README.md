@@ -124,3 +124,15 @@ Destroy the machines and clean up temporary files from the repository.
 vagrant destroy -f
 git clean -xf
 ```
+
+## Troubleshooting
+
+For some reason I ran into an issue where I could not reach the guests via the network anymore. The reason was that the route was not being created on the host.
+
+To create a route manually:
+
+```bash
+## You may need to verify the correct vboxnet interface. eg vboxnet0, vboxnet1 etc.
+## You can find the interface associated to the network range with `VBoxManage list hostonlyifs`
+sudo route -nv add -net 192.168.10 -interface vboxnet1
+```
