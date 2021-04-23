@@ -1,13 +1,13 @@
 # -*- mode: ruby -*-
 # vi:set ft=ruby sw=2 ts=2 sts=2:
 
-# Define the number of master and worker nodes
-NUM_MASTER_NODE = 1
+# Define the number of control-plane and worker nodes
+NUM_CONTROLPLANE_NODE = 1
 NUM_WORKER_NODE = 1
 
 # Node network
 IP_NW = "192.168.10."
-MASTER_IP_START = 100
+CONTROLPLANE_IP_START = 100
 WORKER_IP_START = 200
 LB_IP_START = 10
 
@@ -35,17 +35,17 @@ Vagrant.configure("2") do |config|
 
   end # loadbalancer
 
-  # Provision Master Nodes
-  (1..NUM_MASTER_NODE).each do |i|
-    config.vm.define "master-#{i}" do |node|
+  # Provision Control-Plane Nodes
+  (1..NUM_CONTROLPLANE_NODE).each do |i|
+    config.vm.define "control-plane-#{i}" do |node|
       # Name shown in the GUI
       node.vm.provider "virtualbox" do |vb|
-        vb.name = "kubernetes-the-kubeadm-way-master-#{i}"
+        vb.name = "kubernetes-the-kubeadm-way-control-plane-#{i}"
         vb.memory = 2048
         vb.cpus = 2
       end
-      node.vm.hostname = "master-#{i}"
-      node.vm.network :private_network, ip: IP_NW + "#{MASTER_IP_START + i}"
+      node.vm.hostname = "control-plane-#{i}"
+      node.vm.network :private_network, ip: IP_NW + "#{CONTROLPLANE_IP_START + i}"
       #node.vm.network "forwarded_port", guest: 22, host: "#{2750 + i}"
 
       node.vm.provision "environment-file", type: "file", source: "kubernetes-the-kubeadm-way.env", destination: "/tmp/kubernetes-the-kubeadm-way.sh"
@@ -55,7 +55,8 @@ Vagrant.configure("2") do |config|
       node.vm.provision "setup-hosts", type: "shell", inline: $setup_hosts
 
       node.vm.provision "allow-bridge-nf-traffic", type: "shell", inline: $allow_bridge_nf_traffic
-      node.vm.provision "install-docker", type: "shell", inline: $install_docker
+      #node.vm.provision "install-docker", type: "shell", inline: $install_docker
+      node.vm.provision "install-containerd", type: "shell", inline: $install_containerd
       node.vm.provision "install-nfs-client", type: "shell", inline: $install_nfs_client
       node.vm.provision "install-kubeadm", type: "shell", inline: $install_kubeadm
 
@@ -67,7 +68,7 @@ Vagrant.configure("2") do |config|
       node.vm.provision "kubernetes-metrics-server", type: "shell", inline: $kubernetes_metrics_server, privileged: false if i == 1
 
     end
-  end # masters
+  end # Control-Plane
 
   # Provision Worker Nodes
   (1..NUM_WORKER_NODE).each do |i|
@@ -88,7 +89,8 @@ Vagrant.configure("2") do |config|
       node.vm.provision "setup-hosts", type: "shell", inline: $setup_hosts
 
       node.vm.provision "allow-bridge-nf-traffic", type: "shell", inline: $allow_bridge_nf_traffic
-      node.vm.provision "install-docker", type: "shell", inline: $install_docker
+      #node.vm.provision "install-docker", type: "shell", inline: $install_docker
+      node.vm.provision "install-containerd", type: "shell", inline: $install_containerd
       node.vm.provision "install-nfs-client", type: "shell", inline: $install_nfs_client
       node.vm.provision "install-kubeadm", type: "shell", inline: $install_kubeadm
 
@@ -123,9 +125,9 @@ sed -e '/^.*ubuntu-bionic.*/d' -i /etc/hosts
 # Update /etc/hosts about other hosts
 echo "#{IP_NW}#{LB_IP_START} kubernetes lb loadbalancer" >> /etc/hosts
 
-for i in {1..#{NUM_MASTER_NODE}}; do
-  NR=$(expr #{MASTER_IP_START} + ${i})
-  echo "#{IP_NW}${NR} master-${i}" >> /etc/hosts
+for i in {1..#{NUM_CONTROLPLANE_NODE}}; do
+  NR=$(expr #{CONTROLPLANE_IP_START} + ${i})
+  echo "#{IP_NW}${NR} control-plane-${i}" >> /etc/hosts
 done
 
 for i in {1..#{NUM_WORKER_NODE}}; do
@@ -135,10 +137,12 @@ done
 SCRIPT
 
 $install_nfs_client = <<SCRIPT
+set -x
 sudo apt-get -qq update && sudo apt-get -qq install -y nfs-common
 SCRIPT
 
 $setup_nfs = <<SCRIPT
+set -euxo pipefail
 export NFS_ROOT=/var/nfs
 sudo apt-get -qq update && sudo apt-get -qq install -y nfs-kernel-server
 sudo mkdir -p ${NFS_ROOT}
@@ -153,16 +157,69 @@ sudo systemctl enable nfs-server
 sudo systemctl restart nfs-server
 SCRIPT
 
+$install_containerd = <<SCRIPT
+set -euxo pipefail
+# Install containerd from Docker's repositories
+sudo apt-get -qq update
+sudo apt-get -qq install -y \
+  apt-transport-https \
+  ca-certificates \
+  curl \
+  gnupg \
+  lsb-release
+
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+
+echo \
+  "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu \
+  $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+sudo apt-get -qq update
+sudo apt-get -qq install -y containerd.io
+
+# Configure containerd
+sudo sed -e 's/^\\(disabled_plugins = \\["cri"\\]\\)/#\\1/g' -i /etc/containerd/config.toml
+cat <<EOF | sudo tee -a /etc/containerd/config.toml
+
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
+  [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
+    SystemdCgroup = true
+EOF
+
+# Restart containerd
+sudo systemctl restart containerd
+SCRIPT
+
 $install_docker = <<SCRIPT
-set -x
-# Install docker
-curl -fsSL https://get.docker.com | bash
+set -euxo pipefail
+# Install docker & containerd using convenience script.
+# Note: this will install the latest docker edge release which includes
+# containerd. This is not recommended for production use.
+#curl -fsSL https://get.docker.com | bash
+
+# Install docker & containerd from Docker's repository.
+sudo apt-get -qq update
+sudo apt-get -qq install -y \
+  apt-transport-https \
+  ca-certificates \
+  curl \
+  gnupg \
+  lsb-release
+
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+
+echo \
+  "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu \
+  $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+sudo apt-get -qq update
+sudo apt-get -qq install -y docker-ce docker-ce-cli containerd.io
 
 # Give vagrant user access to docker socket
-usermod -aG docker vagrant
+sudo usermod -aG docker vagrant
 
-# Setup daemon
-cat > /etc/docker/daemon.json <<EOF
+# Configure docker daemon
+cat <<EOF | sudo tee /etc/docker/daemon.json
 {
   "exec-opts": ["native.cgroupdriver=systemd"],
   "log-driver": "json-file",
@@ -173,25 +230,32 @@ cat > /etc/docker/daemon.json <<EOF
 }
 EOF
 
-mkdir -p /etc/systemd/system/docker.service.d
+sudo mkdir -p /etc/systemd/system/docker.service.d
 
 # Restart docker
-systemctl daemon-reload
-systemctl restart docker
+sudo systemctl daemon-reload
+sudo systemctl restart docker
 SCRIPT
 
 
 $allow_bridge_nf_traffic = <<SCRIPT
 set -euxo pipefail
 
-lsmod | grep br_netfilter || modprobe br_netfilter
-
-cat <<EOF > /etc/sysctl.d/k8s.conf
-net.bridge.bridge-nf-call-ip6tables = 1
-net.bridge.bridge-nf-call-iptables = 1
+cat <<EOF | sudo tee /etc/modules-load.d/kubernetes.conf
+overlay
+br_netfilter
 EOF
 
-sysctl --system
+lsmod | grep overlay || sudo modprobe overlay
+lsmod | grep br_netfilter || sudo modprobe br_netfilter
+
+cat <<EOF | sudo tee /etc/sysctl.d/kubernetes.conf
+net.bridge.bridge-nf-call-ip6tables = 1
+net.bridge.bridge-nf-call-iptables  = 1
+net.ipv4.ip_forward                 = 1
+EOF
+
+sudo sysctl --system
 SCRIPT
 
 
@@ -199,12 +263,11 @@ $setup_loadbalancer = <<SCRIPT
 set -euxo pipefail
 
 LB_IP=$(ip addr show enp0s8 | grep "inet " | awk '{print $2}' | cut -d / -f 1)
-MASTER_NODES=$(grep master /etc/hosts | awk '{print $2}')
-
-## Run on Loadbalancer
+CONTROL_PLANE_NODES=$(grep "control-plane" /etc/hosts | awk '{print $2}')
 
 #Install HAProxy
-sudo apt-get -qq update && sudo apt-get -qq install -y haproxy
+sudo apt-get -qq update
+sudo apt-get -qq install -y haproxy
 
 cat <<EOF | sudo tee -a /etc/haproxy/haproxy.cfg 
 
@@ -228,7 +291,7 @@ backend kubernetes-control-plane
     balance roundrobin
 EOF
 
-for instance in ${MASTER_NODES}; do
+for instance in ${CONTROL_PLANE_NODES}; do
   cat <<EOF | sudo tee -a /etc/haproxy/haproxy.cfg
     server ${instance} $(grep ${instance} /etc/hosts | awk '{print $1}'):6443 check fall 3 rise 2
 EOF
@@ -244,13 +307,13 @@ SCRIPT
 
 $install_kubeadm = <<SCRIPT
 set -euxo pipefail
-sudo apt-get update && sudo apt-get install -y apt-transport-https curl
+sudo apt-get -qq update && sudo apt-get -qq install -y apt-transport-https curl
 curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
 cat <<EOF | sudo tee /etc/apt/sources.list.d/kubernetes.list
 deb https://apt.kubernetes.io/ kubernetes-xenial main
 EOF
-sudo apt-get update
-sudo apt-get install -y kubelet kubeadm kubectl
+sudo apt-get -qq update
+sudo apt-get -qq install -y kubelet kubeadm kubectl
 sudo apt-mark hold kubelet kubeadm kubectl
 SCRIPT
 
@@ -276,17 +339,13 @@ apiServer:
 EOF
 
 # Kubeadm Init
-### NOTE THIS IS STUPID. Pre pull the images, then add a new default route so that etcd uses the correct IP. Delete the dummy default route after.
-kubeadm config images pull
-ip route add default via ${NODE_IP} metric 10
+#kubeadm config images pull
 kubeadm init --config=cluster-config.yaml \
   --upload-certs \
   | tee /vagrant/kubeadm-init.log
 
-ip route delete default via ${NODE_IP}
 
-
-# Edit the coredns deployment so it serves the /etc/hosts from it's host so pods can resolve the master/worker nodes
+# Edit the coredns deployment so it serves the /etc/hosts from it's host so pods can resolve the control-plane/worker nodes
 export KUBECONFIG=/etc/kubernetes/admin.conf
 kubectl -n kube-system patch deployment coredns --patch '{"spec": {"template": {"spec": {"containers": [{"name": "coredns", "volumeMounts": [{"name": "hosts-volume", "mountPath": "/etc/hosts"}] }], "volumes": [{ "name": "hosts-volume", "hostPath": {"path": "/etc/hosts"} }] } } } }'
 
@@ -321,44 +380,31 @@ data:
     }
 EOF
 
-
 # Set up CNI network addon
 export KUBECONFIG=/etc/kubernetes/admin.conf
 kubectl apply -f "https://cloud.weave.works/k8s/net?k8s-version=$(kubectl version | base64 | tr -d '\n')&env.IPALLOC_RANGE=${CLUSTER_POD_CIDR}"
 
-# Setup join scripts for additional master and worker nodes
-MASTER_JOIN_CMD=$(grep -e "kubeadm join" -A3 /vagrant/kubeadm-init.log | sed 's/[ /t]*//' | head -3)
+# Setup join scripts for additional control-plane and worker nodes
+CONTROL_PLANE_JOIN_CMD=$(grep -e "kubeadm join" -A3 /vagrant/kubeadm-init.log | sed 's/[ /t]*//' | head -3)
 WORKER_JOIN_CMD=$(grep -e "kubeadm join" -A3 /vagrant/kubeadm-init.log | sed 's/[ /t]*//' | tail -2)
 
-cat <<EOF >/vagrant/join-master.sh
+# Create control-plane join command
+cat <<EOF >/vagrant/join-control-plane.sh
 #!/bin/bash
 set -x
-NODE_IP=$(ip addr show enp0s8 | grep "inet " | awk '{print $2}' | cut -d/ -f1)
 
-### NOTE THIS IS STUPID. Pre pull the images, then add a new default route so that etcd uses the correct IP. Delete the dummy default route after.
-kubeadm config images pull
-ip route add default via ${NODE_IP} metric 10
-
-${MASTER_JOIN_CMD}
-
-ip route delete default via ${NODE_IP}
+${CONTROL_PLANE_JOIN_CMD}
 EOF
 
+# Create worker join command
 cat <<EOF >/vagrant/join-worker.sh
 #!/bin/bash
 set -x
-NODE_IP=$(ip addr show enp0s8 | grep "inet " | awk '{print $2}' | cut -d/ -f1)
-
-### NOTE THIS IS STUPID. Pre pull the images, then add a new default route so that etcd uses the correct IP. Delete the dummy default route after.
-kubeadm config images pull
-ip route add default via ${NODE_IP} metric 10
 
 ${WORKER_JOIN_CMD}
-
-ip route delete default via ${NODE_IP}
 EOF
 
-chmod +x /vagrant/join-master.sh /vagrant/join-worker.sh
+chmod +x /vagrant/join-control-plane.sh /vagrant/join-worker.sh
 
 # Set up admin kubeconfig for the vagrant user
 sudo --user=vagrant mkdir -p /home/vagrant/.kube
@@ -370,7 +416,7 @@ SCRIPT
 
 $cluster_join_control_plane = <<SCRIPT
 set -x
-/vagrant/join-master.sh
+/vagrant/join-control-plane.sh
 
 # Set up admin kubeconfig for the vagrant user
 sudo --user=vagrant mkdir -p /home/vagrant/.kube
@@ -385,6 +431,7 @@ set -x
 SCRIPT
 
 $kubernetes_metrics_server = <<SCRIPT
+set -euxo pipefail
 curl -sSL https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.3.7/components.yaml | \
 sed -E 's%apiregistration.k8s.io/v1beta1%apiregistration.k8s.io/v1%g' | \
 sed -E '/args:/a \\          - --kubelet-insecure-tls' | \

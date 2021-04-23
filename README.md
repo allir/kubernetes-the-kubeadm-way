@@ -23,7 +23,7 @@ brew cask install vagrant
 
 ### Provisioning with Vagrant
 
-The default setup sets up a loadbalancer node, three master nodes and two worker nodes.
+The default setup sets up a loadbalancer node, three control-plane nodes and two worker nodes.
 
 To stand up a new environment
 
@@ -34,7 +34,7 @@ vagrant up
 Connecting to the nodes `vagrant ssh <node>`. Example:
 
 ```bash
-vagrant ssh master-1
+vagrant ssh control-plane-1
 ```
 
 ### Kubernetes setup
@@ -43,7 +43,7 @@ It's all set up using Vagrant provisoners! Yay!
 
 ### Smoke Tests
 
-Let's set up an NGINX deployment and service as a smoke test. This can be run from `master-1` node or using the `admin.kubeconfig` in the repository folder after provisioning.
+Let's set up an NGINX deployment and service as a smoke test. This can be run from `control-plane-1` node or using the `admin.kubeconfig` in the repository folder after provisioning.
 
 ```bash
 kubectl create deployment nginx --image=nginx
